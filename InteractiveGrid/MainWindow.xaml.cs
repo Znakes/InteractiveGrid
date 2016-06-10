@@ -33,6 +33,7 @@ namespace InteractiveGrid
         private void ButtonBase_OnClick2(object sender, RoutedEventArgs e)
         {
             parent.CollisionResult = CollisionResult.CustomBehavour;
+            parent.CustomCollisionPolicy -= Parent_CustomCollisionPolicy;
             parent.CustomCollisionPolicy += Parent_CustomCollisionPolicy;
         }
 

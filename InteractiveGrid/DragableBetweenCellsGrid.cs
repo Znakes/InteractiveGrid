@@ -106,55 +106,9 @@ namespace InteractiveGrid
 
             if (CurrentElement != null && GetEditMode(CurrentElement))
             {
-                var pointInside = Mouse.GetPosition(CurrentElement);
 
-                var offset = Math.Min(CurrentElement.ActualHeight, CurrentElement.ActualWidth)*0.1;
-
-                _transformX = pointInside.X < offset || CurrentElement.ActualWidth - pointInside.X < offset;
-                _transformY = pointInside.Y < offset || CurrentElement.ActualHeight - pointInside.Y < offset;
-
-                // if move all, check if center
-                if (!_transformX && !_transformY)
-                {
-                    if (pointInside.X > 3.0*CurrentElement.ActualWidth/4.0 ||
-                        pointInside.X < CurrentElement.ActualWidth/4.0 ||
-                        pointInside.Y > 3.0*CurrentElement.ActualHeight/4.0 ||
-                        pointInside.Y < CurrentElement.ActualHeight/4.0)
-                    {
-                        return;
-                    }
-                }
-
-                if (_transformX)
-                {
-                    _renderOriginX = pointInside.X < offset ? 1.0 : 0;
-                    Mouse.OverrideCursor = Mouse.OverrideCursor ?? Cursors.SizeWE;
-                }
-                else
-                {
-                    _renderOriginX = 0;
-                }
-
-                if (_transformY)
-                {
-                    _renderOriginY = pointInside.Y < offset ? 1.0 : 0;
-                    Mouse.OverrideCursor = Mouse.OverrideCursor ?? Cursors.SizeNS;
-                }
-                else
-                {
-                    _renderOriginY = 0;
-                }
-
-                if (_transformX && _transformY)
-                {
-                    if ((Math.Abs(_renderOriginX) < double.Epsilon && Math.Abs(_renderOriginY - 1.0) < double.Epsilon) ||
-                        (Math.Abs(_renderOriginY) < double.Epsilon && Math.Abs(_renderOriginX - 1.0) < double.Epsilon))
-                        Mouse.OverrideCursor = Cursors.SizeNESW;
-                    else
-                    {
-                        Mouse.OverrideCursor = Cursors.SizeNWSE;
-                    }
-                }
+                if (!ShowArrows(CurrentElement, ref _transformX, ref _transformY, ref _renderOriginX, ref _renderOriginY))
+                    return;
 
                 int mouseCol, mouseRow;
                 SetZIndex(CurrentElement, 1000);
@@ -182,6 +136,11 @@ namespace InteractiveGrid
         {
             var element = sender as FrameworkElement;
 
+            if (CurrentElement == null && (bool)element.GetValue(EditModeAttachedProperty))
+            {
+                ShowArrows(element);
+            }
+            
             if (!ValidateElement(element))
             {
                 return;
@@ -539,8 +498,89 @@ namespace InteractiveGrid
             return (bool)element.GetValue(EditModeAttachedProperty);
         }
 
+        public bool ShowArrows(FrameworkElement element)
+        {
+            bool transformX = true, transformY = true;
+            double renderOriginX = 0.0, renderOriginY = 0.0;
+            return ShowArrows(element, ref transformX, ref transformY, ref renderOriginX, ref renderOriginY);
+        }
+
+        public bool ShowArrows(FrameworkElement element, ref bool isTransforX, ref bool istTransforY, ref double renderOriginX, ref double renderOriginY)
+        {
+            var pointInside = Mouse.GetPosition(element);
+
+            var offset = Math.Min(element.ActualHeight, element.ActualWidth) * 0.1;
+            isTransforX = pointInside.X < offset || element.ActualWidth - pointInside.X < offset;
+            istTransforY = pointInside.Y < offset || element.ActualHeight - pointInside.Y < offset;
+
+            // if move all, check if center
+            if (!isTransforX && !istTransforY)
+            {
+                if (pointInside.X > 3.0 * element.ActualWidth / 4.0 ||
+                    pointInside.X < element.ActualWidth / 4.0 ||
+                    pointInside.Y > 3.0 * element.ActualHeight / 4.0 ||
+                    pointInside.Y < element.ActualHeight / 4.0)
+                {
+
+                    return false;
+                }
+                else
+                {
+                    Mouse.OverrideCursor = Cursors.SizeAll;
+                }
+            }
+
+            if (isTransforX)
+            {
+                renderOriginX = pointInside.X < offset ? 1.0 : 0;
+                Mouse.OverrideCursor = Cursors.SizeWE;
+            }
+            else
+            {
+                renderOriginX = 0;
+            }
+
+            if (istTransforY)
+            {
+                renderOriginY = pointInside.Y < offset ? 1.0 : 0;
+                Mouse.OverrideCursor = Cursors.SizeNS;
+            }
+            else
+            {
+                renderOriginY = 0;
+            }
+
+            if (isTransforX && istTransforY)
+            {
+                if ((Math.Abs(renderOriginX) < double.Epsilon && Math.Abs(renderOriginY - 1.0) < double.Epsilon) ||
+                    (Math.Abs(renderOriginY) < double.Epsilon && Math.Abs(renderOriginX - 1.0) < double.Epsilon))
+                    Mouse.OverrideCursor = Cursors.SizeNESW;
+                else
+                {
+                    Mouse.OverrideCursor = Cursors.SizeNWSE;
+                }
+            }
+
+            return true;
+        }
+
         private void AddHandlersToChild(FrameworkElement element)
         {
+
+            element.MouseEnter += (s, e) =>
+            {
+                if (CurrentElement == null && (bool)element.GetValue(EditModeAttachedProperty))
+                {
+                    ShowArrows(element);
+                    e.Handled = true;
+                }
+            };
+
+            element.MouseLeave += (s, e) =>
+            {
+                    Mouse.OverrideCursor = Cursors.Arrow;
+            };
+
             element.PreviewMouseLeftButtonDown -= root_MouseLeftButtonDown;
             element.PreviewMouseLeftButtonDown += root_MouseLeftButtonDown;
             element.PreviewMouseLeftButtonUp -= root_MouseLeftButtonUp;
