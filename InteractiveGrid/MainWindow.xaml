@@ -8,7 +8,7 @@
         mc:Ignorable="d"
         Title="MainWindow" Height="350" Width="525">
     <Grid>
-        <local:DragableBetweenCellsGrid  ShowGridLines="True" x:Name="parent"  >
+        <local:DragableBetweenCellsGrid EditModeEnabled="{Binding ElementName=ToggleButton, Path=IsChecked}"  ShowGridLines="True" x:Name="parent"  >
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="*"/>
@@ -32,7 +32,6 @@
 
 
         </local:DragableBetweenCellsGrid>
-        <Button Width="126" Height="50" Content="onoff moving" Click="ButtonBase_OnClick" HorizontalAlignment="Right" VerticalAlignment="Bottom" ></Button>
-        <Button Width="128" Height="50" Content="collision notification on" Click="ButtonBase_OnClick2" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,131,0" />
+        <ToggleButton x:Name="ToggleButton" Width="126" Height="50" Content="onoff moving"  HorizontalAlignment="Right" VerticalAlignment="Bottom" ></ToggleButton>
     </Grid>
 </Window>

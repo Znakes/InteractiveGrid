@@ -54,9 +54,26 @@ namespace InteractiveGrid
             "CollisionResult", typeof(CollisionResult), typeof(DragableBetweenCellsGrid),
             new PropertyMetadata(CollisionResult.RollbackIfCollideAny));
 
+
+        public static readonly DependencyProperty SkipInCollisionCalculationsProperty = DependencyProperty
+            .RegisterAttached(
+                "SkipInCollisionCalculations", typeof(bool), typeof(DragableBetweenCellsGrid),
+                new PropertyMetadata(default(bool)));
+
+        public static void SetSkipInCollisionCalculations(DependencyObject element, bool value)
+        {
+            element.SetValue(SkipInCollisionCalculationsProperty, value);
+        }
+
+        public static bool GetSkipInCollisionCalculations(DependencyObject element)
+        {
+            return (bool)element.GetValue(SkipInCollisionCalculationsProperty);
+        }
+
         #endregion
 
         #region PUBLIC METHODS
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void MarkChildAsEditable(UIElement child)
         {
@@ -68,6 +85,7 @@ namespace InteractiveGrid
         {
             child.SetValue(EditModeAttachedProperty, false);
         }
+
         #endregion
 
         #region PUBLIC PROPERTIES
@@ -94,7 +112,10 @@ namespace InteractiveGrid
             set { SetValue(CollisionResultProperty, value); }
         }
 
-        public event Action<ControlState, ControlState, IEnumerable<UIElement>> CustomCollisionPolicy;
+
+        public event EventHandler<StateChangedEventArgs> FinishingWithCollisions;
+
+        public event EventHandler<StateChangedEventArgs> ControlChanging;
 
         #endregion
 
@@ -106,16 +127,19 @@ namespace InteractiveGrid
 
             if (CurrentElement != null && GetEditMode(CurrentElement))
             {
-
-                if (!ShowArrows(CurrentElement, ref _transformX, ref _transformY, ref _renderOriginX, ref _renderOriginY))
+                if (
+                    !ShowArrows(CurrentElement, ref _transformX, ref _transformY, ref _renderOriginX, ref _renderOriginY))
                     return;
 
                 int mouseCol, mouseRow;
+                _initalState.ZIndex = GetZIndex(CurrentElement);
                 SetZIndex(CurrentElement, 1000);
+
+
                 _mouseOffset = Mouse.GetPosition(this);
                 GetPosition(out mouseCol, out mouseRow);
 
-                _initalState.ZIndex = GetZIndex(CurrentElement);
+
                 _initalState.Margin = CurrentElement.Margin;
                 _initalState.Element = CurrentElement;
                 _initalState.ColSpan = GetColumnSpan(CurrentElement);
@@ -136,15 +160,16 @@ namespace InteractiveGrid
         {
             var element = sender as FrameworkElement;
 
-            if (CurrentElement == null && (bool)element.GetValue(EditModeAttachedProperty))
+            if (element != null && (CurrentElement == null && (bool)element.GetValue(EditModeAttachedProperty)))
             {
                 ShowArrows(element);
             }
-            
+
             if (!ValidateElement(element))
             {
                 return;
             }
+
 
             if (_transformX || _transformY)
             {
@@ -155,29 +180,32 @@ namespace InteractiveGrid
                 var mouseDelta = Mouse.GetPosition(this);
                 mouseDelta.Offset(-_mouseOffset.X, -_mouseOffset.Y);
 
-                var scaleY = 1 +
-                             (Math.Abs(_renderOriginY - 1.0) < double.Epsilon ? -1 : 1)*mouseDelta.Y/
-                             CurrentElement.RenderSize.Height;
-                var scaleX = 1 +
-                             (Math.Abs(_renderOriginX - 1.0) < double.Epsilon ? -1 : 1)*mouseDelta.X/
-                             CurrentElement.RenderSize.Width;
-
-                if (RenderSize.Height*scaleY <= minHeight || RenderSize.Width*scaleX <= minLength)
+                if (CurrentElement != null)
                 {
-                    UnsafeMethods.SetCursorPos(_prevPosition.X, _prevPosition.Y);
-                    return;
-                }
+                    var scaleY = 1 +
+                                 (Math.Abs(_renderOriginY - 1.0) < double.Epsilon ? -1 : 1) * mouseDelta.Y /
+                                 CurrentElement.RenderSize.Height;
+                    var scaleX = 1 +
+                                 (Math.Abs(_renderOriginX - 1.0) < double.Epsilon ? -1 : 1) * mouseDelta.X /
+                                 CurrentElement.RenderSize.Width;
 
-                var scale = ((TransformGroup) CurrentElement.RenderTransform).Children.OfType<ScaleTransform>().First();
-                CurrentElement.RenderTransformOrigin = new Point(_renderOriginX, _renderOriginY);
-                if (_transformY)
-                {
-                    scale.ScaleY = scaleY;
-                }
+                    if (RenderSize.Height * scaleY <= minHeight || RenderSize.Width * scaleX <= minLength)
+                    {
+                        UnsafeMethods.SetCursorPos(_prevPosition.X, _prevPosition.Y);
+                        return;
+                    }
 
-                if (_transformX)
-                {
-                    scale.ScaleX = scaleX; // < 1 ? 1.0 : scaleX;
+                    var scale = ((TransformGroup)CurrentElement.RenderTransform).Children.OfType<ScaleTransform>().First();
+                    CurrentElement.RenderTransformOrigin = new Point(_renderOriginX, _renderOriginY);
+                    if (_transformY)
+                    {
+                        scale.ScaleY = scaleY;
+                    }
+
+                    if (_transformX)
+                    {
+                        scale.ScaleX = scaleX; // < 1 ? 1.0 : scaleX;
+                    }
                 }
             }
             else
@@ -196,6 +224,17 @@ namespace InteractiveGrid
             UnsafeMethods.GetCursorPos(ref _prevPosition);
 
 
+            int col;
+            int row;
+            GetPosition(out col, out row);
+
+
+            //  notify about all movements
+            if (ControlChanging != null)
+            {
+                var newState = GetCurrentControlState(element, col, row);
+                OnControlChanging(newState, CheckCollisions(newState));
+            }
             e.Handled = true;
         }
 
@@ -217,15 +256,7 @@ namespace InteractiveGrid
             GetPosition(out col, out row);
 
             // here we need to check for collision
-
-            var result = GetNewPosition(element, col, row);
-            var newState = new ControlState
-            {
-                Row = result.Item1,
-                RowSpan = result.Item2,
-                Col = result.Item3,
-                ColSpan = result.Item4
-            };
+            var newState = GetCurrentControlState(element, col, row);
 
             IEnumerable<UIElement> collisions = new List<UIElement>();
 
@@ -244,23 +275,24 @@ namespace InteractiveGrid
                 switch (CollisionResult)
                 {
                     case CollisionResult.RollbackIfCollideAny:
-                    {
-                        OnCollisionRollback(element, _initalState);
-                        break;
-                    }
+                        {
+                            OnCollisionRollback(element, _initalState);
+                            break;
+                        }
                     case CollisionResult.CustomBehavour:
-                    {
-                        if (CustomCollisionPolicy != null)
-                            OnCustomCollisionPolicy(newState,collisions);
-                        else
-                            OnCollisionNone(element, newState);
-                        break;
-                    }
+                        {
+                            //if (FinishingWithCollisions != null)
+                            //    OnFinishing(newState, collisions);
+                            //else
+                            //    OnCollisionNone(element, newState);
+                            break;
+                        }
                 }
             }
 
+            OnFinishing(newState, collisions);
 
-            var scale = ((TransformGroup) element.RenderTransform).Children.OfType<ScaleTransform>().First();
+            var scale = ((TransformGroup)element.RenderTransform).Children.OfType<ScaleTransform>().First();
             scale.ScaleX = 1.0;
             scale.ScaleY = 1.0;
             SetZIndex(element, _initalState.ZIndex);
@@ -280,9 +312,9 @@ namespace InteractiveGrid
         {
             int row = state.Row, rowSpan = state.RowSpan, col = state.Col, colSpan = state.ColSpan;
 
-            var collisions = new List<UIElement>(3);
+            var collisions = new List<UIElement>(Children.Count);
 
-            var currentFigure = new List<Point>(rowSpan*colSpan);
+            var currentFigure = new List<Point>(rowSpan * colSpan);
 
             for (var i = row; i < row + rowSpan; i++)
             {
@@ -292,7 +324,7 @@ namespace InteractiveGrid
                 }
             }
 
-            foreach (var child in Children.OfType<UIElement>().ToArray())
+            foreach (var child in Children.OfType<UIElement>().Where(u => !GetSkipInCollisionCalculations(u)).ToArray())
             {
                 if (ReferenceEquals(child, CurrentElement))
                     continue;
@@ -315,9 +347,14 @@ namespace InteractiveGrid
             return collisions;
         }
 
-        private void OnCustomCollisionPolicy(ControlState newState, IEnumerable<UIElement> objectsWithCollision)
+        private void OnFinishing(ControlState newState, IEnumerable<UIElement> objectsWithCollision)
         {
-            CustomCollisionPolicy?.Invoke(_initalState,newState, objectsWithCollision);
+            FinishingWithCollisions?.Invoke(this, new StateChangedEventArgs(_initalState, newState, objectsWithCollision,Children.OfType<UIElement>().ToArray()));
+        }
+
+        protected virtual void OnControlChanging(ControlState newState, IEnumerable<UIElement> objectsWithCollision)
+        {
+            ControlChanging?.Invoke(this,new StateChangedEventArgs(_initalState, newState, objectsWithCollision, Children.OfType<UIElement>().ToArray()));
         }
 
         private void OnCollisionRollback(UIElement element, ControlState initState)
@@ -383,6 +420,18 @@ namespace InteractiveGrid
             }
 
             return new Tuple<int, int, int, int>(r, rs, c, cs);
+        }
+
+        private ControlState GetCurrentControlState(FrameworkElement element, int col, int row)
+        {
+            var result = GetNewPosition(element, col, row);
+            return new ControlState
+            {
+                Row = result.Item1,
+                RowSpan = result.Item2,
+                Col = result.Item3,
+                ColSpan = result.Item4
+            };
         }
 
         private void ApplyNewPositionIfScaling(FrameworkElement element, int currentMousePosition,
@@ -461,6 +510,7 @@ namespace InteractiveGrid
         #endregion
 
         #region Inner wpf logic
+
         protected override void OnVisualChildrenChanged(DependencyObject visualAdded, DependencyObject visualRemoved)
         {
             // Track when objects are added and removed
@@ -505,8 +555,11 @@ namespace InteractiveGrid
             return ShowArrows(element, ref transformX, ref transformY, ref renderOriginX, ref renderOriginY);
         }
 
-        public bool ShowArrows(FrameworkElement element, ref bool isTransforX, ref bool istTransforY, ref double renderOriginX, ref double renderOriginY)
+        public bool ShowArrows(FrameworkElement element, ref bool isTransforX, ref bool istTransforY,
+            ref double renderOriginX, ref double renderOriginY)
         {
+
+            Mouse.OverrideCursor = null;
             var pointInside = Mouse.GetPosition(element);
 
             var offset = Math.Min(element.ActualHeight, element.ActualWidth) * 0.1;
@@ -521,13 +574,9 @@ namespace InteractiveGrid
                     pointInside.Y > 3.0 * element.ActualHeight / 4.0 ||
                     pointInside.Y < element.ActualHeight / 4.0)
                 {
-
                     return false;
                 }
-                else
-                {
-                    Mouse.OverrideCursor = Cursors.SizeAll;
-                }
+                Mouse.OverrideCursor = Cursors.SizeAll;
             }
 
             if (isTransforX)
@@ -566,7 +615,6 @@ namespace InteractiveGrid
 
         private void AddHandlersToChild(FrameworkElement element)
         {
-
             element.MouseEnter += (s, e) =>
             {
                 if (CurrentElement == null && (bool)element.GetValue(EditModeAttachedProperty))
@@ -576,10 +624,7 @@ namespace InteractiveGrid
                 }
             };
 
-            element.MouseLeave += (s, e) =>
-            {
-                    Mouse.OverrideCursor = Cursors.Arrow;
-            };
+            element.MouseLeave += (s, e) => { Mouse.OverrideCursor = Cursors.Arrow; };
 
             element.PreviewMouseLeftButtonDown -= root_MouseLeftButtonDown;
             element.PreviewMouseLeftButtonDown += root_MouseLeftButtonDown;
@@ -610,7 +655,30 @@ namespace InteractiveGrid
                 }
             }
         }
+
         #endregion
+    }
+
+    public class StateChangedEventArgs : EventArgs
+    {
+        public StateChangedEventArgs()
+        {
+            
+        }
+
+        public StateChangedEventArgs(ControlState initial, ControlState finish, IEnumerable<UIElement> collisions, IEnumerable<UIElement> all)
+        {
+            InitialState = initial;
+            FinishState = finish;
+
+            ElementsWithCollisions = collisions;
+            AllElements = all;
+        }
+
+        public ControlState InitialState { get; set; }
+        public ControlState FinishState { get; set; }
+        public IEnumerable<UIElement> ElementsWithCollisions { get; set; }
+        public IEnumerable<UIElement> AllElements { get; set; }
     }
 
     public struct ControlState
@@ -650,7 +718,7 @@ namespace InteractiveGrid
         RollbackIfCollideAny,
 
         /// <summary>
-        ///     Raised custom event <see cref="DragableBetweenCellsGrid.CustomCollisionPolicy" />. If not set, used
+        ///     Raised custom event <see cref="DragableBetweenCellsGrid.FinishingWithCollisions" />. If not set, used
         ///     <see cref="None" />
         /// </summary>
         CustomBehavour
